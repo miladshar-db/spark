@@ -17,9 +17,10 @@
 
 package org.apache.spark.memory
 
+import java.util.{HashMap, Map}
 import javax.annotation.concurrent.GuardedBy
 
-import scala.collection.mutable
+import scala.jdk.CollectionConverters._
 
 import org.apache.spark.internal.Logging
 
@@ -53,17 +54,17 @@ private[memory] class ExecutionMemoryPool(
    * Map from taskAttemptId -> memory consumption in bytes
    */
   @GuardedBy("lock")
-  private val memoryForTask = new mutable.HashMap[Long, Long]()
+  private val memoryForTask: Map[Long, Long] = new HashMap[Long, Long]()
 
   override def memoryUsed: Long = lock.synchronized {
-    memoryForTask.values.sum
+    memoryForTask.values.asScala.sum
   }
 
   /**
    * Returns the memory consumption, in bytes, for the given task.
    */
   def getMemoryUsageForTask(taskAttemptId: Long): Long = lock.synchronized {
-    memoryForTask.getOrElse(taskAttemptId, 0L)
+    memoryForTask.getOrDefault(taskAttemptId, 0L)
   }
 
   /**
@@ -99,8 +100,8 @@ private[memory] class ExecutionMemoryPool(
 
     // Add this task to the taskMemory map just so we can keep an accurate count of the number
     // of active tasks, to let other tasks ramp down their memory in calls to `acquireMemory`
-    if (!memoryForTask.contains(taskAttemptId)) {
-      memoryForTask(taskAttemptId) = 0L
+    if (!memoryForTask.containsKey(taskAttemptId)) {
+      memoryForTask.put(taskAttemptId, 0L)
       // This will later cause waiting tasks to wake up and check numTasks again
       lock.notifyAll()
     }
@@ -110,8 +111,8 @@ private[memory] class ExecutionMemoryPool(
     // memory to give it (we always let each task get at least 1 / (2 * numActiveTasks)).
     // TODO: simplify this to limit each task to its own slot
     while (true) {
-      val numActiveTasks = memoryForTask.keys.size
-      val curMem = memoryForTask(taskAttemptId)
+      val numActiveTasks = memoryForTask.size
+      val curMem = memoryForTask.get(taskAttemptId)
 
       // In every iteration of this loop, we should first try to reclaim any borrowed execution
       // space from storage. This is necessary because of the potential race condition where new
@@ -139,7 +140,7 @@ private[memory] class ExecutionMemoryPool(
         logInfo(s"TID $taskAttemptId waiting for at least 1/2N of $poolName pool to be free")
         lock.wait()
       } else {
-        memoryForTask(taskAttemptId) += toGrant
+        memoryForTask.computeIfPresent(taskAttemptId, (_, value) => value + toGrant)
         return toGrant
       }
     }
@@ -150,7 +151,7 @@ private[memory] class ExecutionMemoryPool(
    * Release `numBytes` of memory acquired by the given task.
    */
   def releaseMemory(numBytes: Long, taskAttemptId: Long): Unit = lock.synchronized {
-    val curMem = memoryForTask.getOrElse(taskAttemptId, 0L)
+    val curMem = memoryForTask.getOrDefault(taskAttemptId, 0L)
     val memoryToFree = if (curMem < numBytes) {
       logWarning(
         s"Internal error: release called on $numBytes bytes but task only has $curMem bytes " +
@@ -159,9 +160,9 @@ private[memory] class ExecutionMemoryPool(
     } else {
       numBytes
     }
-    if (memoryForTask.contains(taskAttemptId)) {
-      memoryForTask(taskAttemptId) -= memoryToFree
-      if (memoryForTask(taskAttemptId) <= 0) {
+    if (memoryForTask.containsKey(taskAttemptId)) {
+      memoryForTask.computeIfPresent(taskAttemptId, (_, value) => value - memoryToFree)
+      if (memoryForTask.get(taskAttemptId) <= 0) {
         memoryForTask.remove(taskAttemptId)
       }
     }

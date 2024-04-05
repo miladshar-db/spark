@@ -19,9 +19,8 @@ package org.apache.spark.storage.memory
 
 import java.io.OutputStream
 import java.nio.ByteBuffer
-import java.util.LinkedHashMap
+import java.util.{HashMap, LinkedHashMap, Map}
 
-import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 import scala.reflect.ClassTag
@@ -95,10 +94,10 @@ private[spark] class MemoryStore(
 
   // A mapping from taskAttemptId to amount of memory used for unrolling a block (in bytes)
   // All accesses of this map are assumed to have manually synchronized on `memoryManager`
-  private val onHeapUnrollMemoryMap = mutable.HashMap[Long, Long]()
+  private val onHeapUnrollMemoryMap: Map[Long, Long] = new HashMap[Long, Long]()
   // Note: off-heap unroll memory is only used in putIteratorAsBytes() because off-heap caching
   // always stores serialized values.
-  private val offHeapUnrollMemoryMap = mutable.HashMap[Long, Long]()
+  private val offHeapUnrollMemoryMap: Map[Long, Long] = new HashMap[Long, Long]
 
   // Initial memory to request before unrolling any block
   private val unrollMemoryThreshold: Long =
@@ -588,7 +587,7 @@ private[spark] class MemoryStore(
           case MemoryMode.ON_HEAP => onHeapUnrollMemoryMap
           case MemoryMode.OFF_HEAP => offHeapUnrollMemoryMap
         }
-        unrollMemoryMap(taskAttemptId) = unrollMemoryMap.getOrElse(taskAttemptId, 0L) + memory
+        unrollMemoryMap.compute(taskAttemptId, (_, value) => value + memory)
       }
       success
     }
@@ -605,13 +604,13 @@ private[spark] class MemoryStore(
         case MemoryMode.ON_HEAP => onHeapUnrollMemoryMap
         case MemoryMode.OFF_HEAP => offHeapUnrollMemoryMap
       }
-      if (unrollMemoryMap.contains(taskAttemptId)) {
-        val memoryToRelease = math.min(memory, unrollMemoryMap(taskAttemptId))
+      if (unrollMemoryMap.containsKey(taskAttemptId)) {
+        val memoryToRelease = math.min(memory, unrollMemoryMap.get(taskAttemptId))
         if (memoryToRelease > 0) {
-          unrollMemoryMap(taskAttemptId) -= memoryToRelease
+          unrollMemoryMap.computeIfPresent(taskAttemptId, (_, value) => value - memoryToRelease)
           memoryManager.releaseUnrollMemory(memoryToRelease, memoryMode)
         }
-        if (unrollMemoryMap(taskAttemptId) == 0) {
+        if (unrollMemoryMap.get(taskAttemptId) == 0) {
           unrollMemoryMap.remove(taskAttemptId)
         }
       }
@@ -622,22 +621,22 @@ private[spark] class MemoryStore(
    * Return the amount of memory currently occupied for unrolling blocks across all tasks.
    */
   def currentUnrollMemory: Long = memoryManager.synchronized {
-    onHeapUnrollMemoryMap.values.sum + offHeapUnrollMemoryMap.values.sum
+    onHeapUnrollMemoryMap.values.asScala.sum + offHeapUnrollMemoryMap.values.asScala.sum
   }
 
   /**
    * Return the amount of memory currently occupied for unrolling blocks by this task.
    */
   def currentUnrollMemoryForThisTask: Long = memoryManager.synchronized {
-    onHeapUnrollMemoryMap.getOrElse(currentTaskAttemptId(), 0L) +
-      offHeapUnrollMemoryMap.getOrElse(currentTaskAttemptId(), 0L)
+    onHeapUnrollMemoryMap.getOrDefault(currentTaskAttemptId(), 0L) +
+      offHeapUnrollMemoryMap.getOrDefault(currentTaskAttemptId(), 0L)
   }
 
   /**
    * Return the number of tasks currently unrolling blocks.
    */
   private def numTasksUnrolling: Int = memoryManager.synchronized {
-    (onHeapUnrollMemoryMap.keys ++ offHeapUnrollMemoryMap.keys).toSet.size
+    (onHeapUnrollMemoryMap.asScala.keys ++ offHeapUnrollMemoryMap.asScala.keys).toSet.size
   }
 
   /**
