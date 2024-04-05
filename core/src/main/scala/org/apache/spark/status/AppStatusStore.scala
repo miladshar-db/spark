@@ -102,7 +102,7 @@ private[spark] class AppStatusStore(
   }
 
   private def replaceExec(origin: v1.ExecutorSummary): v1.ExecutorSummary = {
-    if (origin.id == SparkContext.DRIVER_IDENTIFIER) {
+    if (SparkContext.isDriver(origin.id)) {
       replaceDriverGcTime(origin, extractGcTime(origin), extractAppTime)
     } else {
       origin

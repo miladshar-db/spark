@@ -247,7 +247,7 @@ private[spark] class EventLoggingListener(
 
   override def onExecutorMetricsUpdate(event: SparkListenerExecutorMetricsUpdate): Unit = {
     if (shouldLogStageExecutorMetrics) {
-      if (event.execId == SparkContext.DRIVER_IDENTIFIER) {
+      if (SparkContext.isDriver(event.execId)) {
         logEvent(event)
       }
       event.executorUpdates.foreach { case (stageKey1, newPeaks) =>

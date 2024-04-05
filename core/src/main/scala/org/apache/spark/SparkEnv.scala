@@ -221,7 +221,7 @@ class SparkEnv (
   private[spark] def initializeShuffleManager(): Unit = {
     Preconditions.checkState(null == _shuffleManager,
       "Shuffle manager already initialized to %s", _shuffleManager)
-    _shuffleManager = ShuffleManager.create(conf, executorId == SparkContext.DRIVER_IDENTIFIER)
+    _shuffleManager = ShuffleManager.create(conf, SparkContext.isDriver(executorId))
   }
 
   private[spark] def initializeMemoryManager(numUsableCores: Int): Unit = {
@@ -330,7 +330,7 @@ object SparkEnv extends Logging {
       mockOutputCommitCoordinator: Option[OutputCommitCoordinator] = None): SparkEnv = {
     // scalastyle:on argcount
 
-    val isDriver = executorId == SparkContext.DRIVER_IDENTIFIER
+    val isDriver = SparkContext.isDriver(executorId)
 
     // Listener bus is only used on the driver
     if (isDriver) {
